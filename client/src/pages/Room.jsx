@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { Copy, CheckCircle, File as FileIcon, Activity, Send, Download, ShieldCheck, Clock } from 'lucide-react';
+import { Copy, CheckCircle, File as FileIcon, Activity, Send, Download, ShieldCheck, Clock, Lock } from 'lucide-react';
 import { io } from 'socket.io-client';
+import { importEncryptionKey, encryptChunk, decryptChunk } from '../utils/crypto';
 
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-// Helper to generate SHA-256 Hash
 const calculateHash = async (fileOrBlob) => {
   const arrayBuffer = await fileOrBlob.arrayBuffer();
   const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
@@ -22,12 +22,13 @@ const Room = () => {
   const [connectionStatus, setConnectionStatus] = useState('Waiting for peer...');
   const [peerConnected, setPeerConnected] = useState(false);
   
-  // Transfer States
+  // Transfer & Crypto States
   const [progress, setProgress] = useState(0);
   const [transferSpeed, setTransferSpeed] = useState('0.00');
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferComplete, setTransferComplete] = useState(false);
   const [hashVerified, setHashVerified] = useState(false);
+  const [encryptionKey, setEncryptionKey] = useState(null);
 
   const fileToShare = location.state?.file;
   const isSender = !!fileToShare;
@@ -37,13 +38,37 @@ const Room = () => {
   const peerRef = useRef(null);
   const dataChannelRef = useRef(null);
   const receiveBuffer = useRef([]);
-  const receivedSize = useRef(0);
+  const receivedSize = useRef(0); // Tracks decrypted bytes received
   const expectedMeta = useRef(null);
-  const transferStartTime = useRef(null); // For speed calculation
+  const transferStartTime = useRef(null);
 
-  const inviteLink = `${window.location.origin}/room/${roomId}`;
+  // The link MUST include the hash so the receiver gets the key!
+  const inviteLink = `${window.location.origin}/room/${roomId}${window.location.hash}`;
 
+  // 1. Initialize Crypto Key from URL
   useEffect(() => {
+    const initKey = async () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#key=')) {
+        try {
+          const keyString = hash.replace('#key=', '');
+          const key = await importEncryptionKey(keyString);
+          setEncryptionKey(key);
+        } catch (err) {
+          console.error("Failed to import encryption key:", err);
+          setConnectionStatus('Encryption Error: Invalid Link');
+        }
+      } else {
+        setConnectionStatus('Encryption Error: Missing Key in URL');
+      }
+    };
+    initKey();
+  }, []);
+
+  // 2. Initialize WebRTC
+  useEffect(() => {
+    if (!encryptionKey) return; // Wait for key to load
+
     socketRef.current = io('http://localhost:3000');
     peerRef.current = new RTCPeerConnection(rtcConfig);
 
@@ -100,10 +125,10 @@ const Room = () => {
       socketRef.current.disconnect();
       peerRef.current.close();
     };
-  }, [roomId, isSender]);
+  }, [roomId, isSender, encryptionKey]);
 
   const updateSpeed = (bytes) => {
-    const elapsed = (Date.now() - transferStartTime.current) / 1000; // in seconds
+    const elapsed = (Date.now() - transferStartTime.current) / 1000;
     if (elapsed > 0) {
       const speedMBps = (bytes / (1024 * 1024)) / elapsed;
       setTransferSpeed(speedMBps.toFixed(2));
@@ -121,20 +146,18 @@ const Room = () => {
           receivedSize.current = 0;
           transferStartTime.current = Date.now();
           setIsTransferring(true);
-          setConnectionStatus('Receiving file...');
+          setConnectionStatus('Receiving encrypted file...');
         } else if (data.type === 'eof') {
           setIsTransferring(false);
-          setConnectionStatus('Verifying file integrity...');
+          setConnectionStatus('Verifying and Decrypting...');
           
           const blob = new Blob(receiveBuffer.current, { type: expectedMeta.current.mime });
           
-          // Verify Hash
           const receivedHash = await calculateHash(blob);
           if (receivedHash === expectedMeta.current.hash) {
             setHashVerified(true);
           }
 
-          // Trigger Download
           const downloadUrl = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = downloadUrl;
@@ -146,25 +169,31 @@ const Room = () => {
           setProgress(100);
         }
       } else {
-        receiveBuffer.current.push(event.data);
-        receivedSize.current += event.data.byteLength;
-        updateSpeed(receivedSize.current);
-        if (expectedMeta.current) {
-          setProgress(Math.round((receivedSize.current / expectedMeta.current.size) * 100));
+        // [BROWSER B] DECRYPTION HAPPENS HERE
+        try {
+          const decryptedBuffer = await decryptChunk(encryptionKey, event.data);
+          receiveBuffer.current.push(decryptedBuffer);
+          receivedSize.current += decryptedBuffer.byteLength;
+          updateSpeed(receivedSize.current);
+          if (expectedMeta.current) {
+            setProgress(Math.round((receivedSize.current / expectedMeta.current.size) * 100));
+          }
+        } catch (err) {
+          console.error("Decryption failed! Did the URL key match?", err);
+          setConnectionStatus('Decryption Failed! File corrupted.');
         }
       }
     };
   };
 
   const sendFile = async () => {
-    if (!fileToShare || !dataChannelRef.current) return;
+    if (!fileToShare || !dataChannelRef.current || !encryptionKey) return;
     setConnectionStatus('Generating secure hash...');
     
-    // Generate SHA-256 hash before sending
     const fileHash = await calculateHash(fileToShare);
     
     setIsTransferring(true);
-    setConnectionStatus('Sending file...');
+    setConnectionStatus('Encrypting & Sending...');
     transferStartTime.current = Date.now();
 
     dataChannelRef.current.send(JSON.stringify({
@@ -172,7 +201,7 @@ const Room = () => {
       name: fileToShare.name,
       size: fileToShare.size,
       mime: fileToShare.type,
-      hash: fileHash // Send hash to receiver
+      hash: fileHash
     }));
 
     const chunkSize = 64 * 1024;
@@ -182,24 +211,32 @@ const Room = () => {
       const slice = fileToShare.slice(currentOffset, currentOffset + chunkSize);
       const reader = new FileReader();
       
-      reader.onload = (e) => {
-        dataChannelRef.current.send(e.target.result);
-        offset += e.target.result.byteLength;
-        setProgress(Math.round((offset / fileToShare.size) * 100));
-        updateSpeed(offset);
+      reader.onload = async (e) => {
+        // [BROWSER A] ENCRYPTION HAPPENS HERE
+        try {
+          const encryptedBuffer = await encryptChunk(encryptionKey, e.target.result);
+          dataChannelRef.current.send(encryptedBuffer);
+          
+          offset += e.target.result.byteLength; // Track unencrypted size for accurate progress
+          setProgress(Math.round((offset / fileToShare.size) * 100));
+          updateSpeed(offset);
 
-        if (offset < fileToShare.size) {
-          if (dataChannelRef.current.bufferedAmount > 1024 * 1024) {
-            setTimeout(() => readSlice(offset), 50);
+          if (offset < fileToShare.size) {
+            if (dataChannelRef.current.bufferedAmount > 1024 * 1024) {
+              setTimeout(() => readSlice(offset), 50);
+            } else {
+              readSlice(offset);
+            }
           } else {
-            readSlice(offset);
+            dataChannelRef.current.send(JSON.stringify({ type: 'eof' }));
+            setIsTransferring(false);
+            setTransferComplete(true);
+            setHashVerified(true);
+            setConnectionStatus('Transfer Complete!');
           }
-        } else {
-          dataChannelRef.current.send(JSON.stringify({ type: 'eof' }));
-          setIsTransferring(false);
-          setTransferComplete(true);
-          setHashVerified(true); // Sender knows their own hash is correct
-          setConnectionStatus('Transfer Complete!');
+        } catch (err) {
+          console.error("Encryption failed!", err);
+          setConnectionStatus('Encryption Failed!');
         }
       };
       reader.readAsArrayBuffer(slice);
@@ -216,8 +253,13 @@ const Room = () => {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-slate-50">
-      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 w-full max-w-2xl">
-        <div className="text-center mb-8">
+      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 w-full max-w-2xl relative">
+        
+        <div className="absolute top-6 right-6 flex items-center text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 text-xs font-bold shadow-sm">
+          <Lock className="w-3 h-3 mr-1.5" /> E2E Encrypted
+        </div>
+
+        <div className="text-center mb-8 mt-4">
           <h1 className="text-3xl font-bold text-slate-800">Transfer Room</h1>
           <p className="text-slate-500 mt-2">Room ID: <span className="font-mono font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">{roomId}</span></p>
         </div>
@@ -260,7 +302,7 @@ const Room = () => {
           <div className="mt-6 flex flex-col items-center">
             {isSender && !isTransferring && !transferComplete && (
               <button onClick={sendFile} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold transition-all transform hover:scale-105 shadow-md">
-                <Send className="w-5 h-5" /> Send File Now
+                <Send className="w-5 h-5" /> Send Encrypted File
               </button>
             )}
 
@@ -268,7 +310,7 @@ const Room = () => {
               <div className="w-full">
                 <div className="flex justify-between items-center text-sm font-medium text-slate-600 mb-2">
                   <span className="flex items-center gap-2">
-                    {isSender ? 'Uploading...' : 'Downloading...'}
+                    {isSender ? 'Encrypting & Uploading...' : 'Receiving & Decrypting...'}
                     {isTransferring && <span className="flex items-center text-blue-600 bg-blue-50 px-2 py-0.5 rounded"><Clock className="w-3 h-3 mr-1"/> {transferSpeed} MB/s</span>}
                   </span>
                   <span>{progress}%</span>
