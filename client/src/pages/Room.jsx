@@ -18,13 +18,12 @@ const Room = () => {
   const location = useLocation();
   const [copied, setCopied] = useState(false);
   
-  // UI & Network States
   const [connectionStatus, setConnectionStatus] = useState('Waiting for peer...');
   const [peerConnected, setPeerConnected] = useState(false);
   
-  // Transfer & Crypto States
   const [progress, setProgress] = useState(0);
   const [transferSpeed, setTransferSpeed] = useState('0.00');
+  const [eta, setEta] = useState('--'); // NEW: ETA State
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferComplete, setTransferComplete] = useState(false);
   const [hashVerified, setHashVerified] = useState(false);
@@ -33,19 +32,16 @@ const Room = () => {
   const fileToShare = location.state?.file;
   const isSender = !!fileToShare;
 
-  // Refs
   const socketRef = useRef(null);
   const peerRef = useRef(null);
   const dataChannelRef = useRef(null);
   const receiveBuffer = useRef([]);
-  const receivedSize = useRef(0); // Tracks decrypted bytes received
+  const receivedSize = useRef(0); 
   const expectedMeta = useRef(null);
   const transferStartTime = useRef(null);
 
-  // The link MUST include the hash so the receiver gets the key!
   const inviteLink = `${window.location.origin}/room/${roomId}${window.location.hash}`;
 
-  // 1. Initialize Crypto Key from URL
   useEffect(() => {
     const initKey = async () => {
       const hash = window.location.hash;
@@ -55,7 +51,6 @@ const Room = () => {
           const key = await importEncryptionKey(keyString);
           setEncryptionKey(key);
         } catch (err) {
-          console.error("Failed to import encryption key:", err);
           setConnectionStatus('Encryption Error: Invalid Link');
         }
       } else {
@@ -65,11 +60,10 @@ const Room = () => {
     initKey();
   }, []);
 
-  // 2. Initialize WebRTC
   useEffect(() => {
-    if (!encryptionKey) return; // Wait for key to load
+    if (!encryptionKey) return; 
 
-    socketRef.current = io('http://localhost:3000');
+    socketRef.current = io('https://p2p-web-share-atem.onrender.com');
     peerRef.current = new RTCPeerConnection(rtcConfig);
 
     peerRef.current.onicecandidate = (e) => {
@@ -127,16 +121,28 @@ const Room = () => {
     };
   }, [roomId, isSender, encryptionKey]);
 
-  const updateSpeed = (bytes) => {
+  // NEW: Integrated ETA calculation
+  const updateStats = (bytes) => {
     const elapsed = (Date.now() - transferStartTime.current) / 1000;
     if (elapsed > 0) {
       const speedMBps = (bytes / (1024 * 1024)) / elapsed;
       setTransferSpeed(speedMBps.toFixed(2));
+
+      // Calculate ETA
+      const totalSize = isSender ? fileToShare.size : expectedMeta.current?.size;
+      if (totalSize && speedMBps > 0) {
+        const remainingBytes = totalSize - bytes;
+        const remainingSeconds = (remainingBytes / (1024 * 1024)) / speedMBps;
+        setEta(Math.max(0, Math.ceil(remainingSeconds)) + 's');
+      }
     }
   };
 
   const setupDataChannel = (channel) => {
     channel.binaryType = 'arraybuffer';
+    // NEW: Native WebRTC Buffer Threshold
+    channel.bufferedAmountLowThreshold = 1024 * 1024; // 1MB threshold
+
     channel.onmessage = async (event) => {
       if (typeof event.data === 'string') {
         const data = JSON.parse(event.data);
@@ -169,17 +175,15 @@ const Room = () => {
           setProgress(100);
         }
       } else {
-        // [BROWSER B] DECRYPTION HAPPENS HERE
         try {
           const decryptedBuffer = await decryptChunk(encryptionKey, event.data);
           receiveBuffer.current.push(decryptedBuffer);
           receivedSize.current += decryptedBuffer.byteLength;
-          updateSpeed(receivedSize.current);
+          updateStats(receivedSize.current);
           if (expectedMeta.current) {
             setProgress(Math.round((receivedSize.current / expectedMeta.current.size) * 100));
           }
         } catch (err) {
-          console.error("Decryption failed! Did the URL key match?", err);
           setConnectionStatus('Decryption Failed! File corrupted.');
         }
       }
@@ -207,25 +211,28 @@ const Room = () => {
     const chunkSize = 64 * 1024;
     let offset = 0;
 
-    const readSlice = (currentOffset) => {
-      const slice = fileToShare.slice(currentOffset, currentOffset + chunkSize);
+    const readSlice = () => {
+      const slice = fileToShare.slice(offset, offset + chunkSize);
       const reader = new FileReader();
       
       reader.onload = async (e) => {
-        // [BROWSER A] ENCRYPTION HAPPENS HERE
         try {
           const encryptedBuffer = await encryptChunk(encryptionKey, e.target.result);
           dataChannelRef.current.send(encryptedBuffer);
           
-          offset += e.target.result.byteLength; // Track unencrypted size for accurate progress
+          offset += e.target.result.byteLength; 
           setProgress(Math.round((offset / fileToShare.size) * 100));
-          updateSpeed(offset);
+          updateStats(offset);
 
           if (offset < fileToShare.size) {
-            if (dataChannelRef.current.bufferedAmount > 1024 * 1024) {
-              setTimeout(() => readSlice(offset), 50);
+            // NEW: Native WebRTC Backpressure Handling
+            if (dataChannelRef.current.bufferedAmount > dataChannelRef.current.bufferedAmountLowThreshold) {
+              dataChannelRef.current.onbufferedamountlow = () => {
+                dataChannelRef.current.onbufferedamountlow = null; // Clear listener
+                readSlice(); // Resume when buffer clears
+              };
             } else {
-              readSlice(offset);
+              readSlice(); // Continue immediately
             }
           } else {
             dataChannelRef.current.send(JSON.stringify({ type: 'eof' }));
@@ -235,14 +242,13 @@ const Room = () => {
             setConnectionStatus('Transfer Complete!');
           }
         } catch (err) {
-          console.error("Encryption failed!", err);
           setConnectionStatus('Encryption Failed!');
         }
       };
       reader.readAsArrayBuffer(slice);
     };
 
-    setTimeout(() => readSlice(0), 100);
+    setTimeout(() => readSlice(), 100);
   };
 
   const copyToClipboard = () => {
@@ -311,7 +317,12 @@ const Room = () => {
                 <div className="flex justify-between items-center text-sm font-medium text-slate-600 mb-2">
                   <span className="flex items-center gap-2">
                     {isSender ? 'Encrypting & Uploading...' : 'Receiving & Decrypting...'}
-                    {isTransferring && <span className="flex items-center text-blue-600 bg-blue-50 px-2 py-0.5 rounded"><Clock className="w-3 h-3 mr-1"/> {transferSpeed} MB/s</span>}
+                    {/* NEW: Speed and ETA Badge combined cleanly */}
+                    {isTransferring && (
+                      <span className="flex items-center text-blue-600 bg-blue-50 px-2 py-0.5 rounded ml-2">
+                        <Clock className="w-3 h-3 mr-1"/> {transferSpeed} MB/s <span className="mx-1 text-blue-300">|</span> {eta} remaining
+                      </span>
+                    )}
                   </span>
                   <span>{progress}%</span>
                 </div>
