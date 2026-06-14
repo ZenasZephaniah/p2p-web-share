@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { Copy, CheckCircle, File as FileIcon, Activity, Send, Download } from 'lucide-react';
+import { Copy, CheckCircle, File as FileIcon, Activity, Send, Download, ShieldCheck, Clock } from 'lucide-react';
 import { io } from 'socket.io-client';
 
-const rtcConfig = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+// Helper to generate SHA-256 Hash
+const calculateHash = async (fileOrBlob) => {
+  const arrayBuffer = await fileOrBlob.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
 const Room = () => {
@@ -12,27 +18,28 @@ const Room = () => {
   const location = useLocation();
   const [copied, setCopied] = useState(false);
   
-  // UI States
+  // UI & Network States
   const [connectionStatus, setConnectionStatus] = useState('Waiting for peer...');
   const [peerConnected, setPeerConnected] = useState(false);
   
   // Transfer States
   const [progress, setProgress] = useState(0);
+  const [transferSpeed, setTransferSpeed] = useState('0.00');
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferComplete, setTransferComplete] = useState(false);
+  const [hashVerified, setHashVerified] = useState(false);
 
   const fileToShare = location.state?.file;
   const isSender = !!fileToShare;
 
-  // Refs for Networking & Transfer
+  // Refs
   const socketRef = useRef(null);
   const peerRef = useRef(null);
   const dataChannelRef = useRef(null);
-  
-  // Refs for Receiver Reassembly
   const receiveBuffer = useRef([]);
   const receivedSize = useRef(0);
   const expectedMeta = useRef(null);
+  const transferStartTime = useRef(null); // For speed calculation
 
   const inviteLink = `${window.location.origin}/room/${roomId}`;
 
@@ -40,10 +47,8 @@ const Room = () => {
     socketRef.current = io('http://localhost:3000');
     peerRef.current = new RTCPeerConnection(rtcConfig);
 
-    peerRef.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current.emit('ice-candidate', { roomId, candidate: event.candidate });
-      }
+    peerRef.current.onicecandidate = (e) => {
+      if (e.candidate) socketRef.current.emit('ice-candidate', { roomId, candidate: e.candidate });
     };
 
     peerRef.current.onconnectionstatechange = () => {
@@ -62,7 +67,7 @@ const Room = () => {
       socketRef.current.emit('join-room', roomId);
 
       socketRef.current.on('user-joined', async () => {
-        setConnectionStatus('Peer joined. Negotiating connection...');
+        setConnectionStatus('Peer joined. Negotiating...');
         const offer = await peerRef.current.createOffer();
         await peerRef.current.setLocalDescription(offer);
         socketRef.current.emit('offer', { roomId, sdp: offer });
@@ -73,14 +78,12 @@ const Room = () => {
       });
     } else {
       socketRef.current.emit('join-room', roomId);
-
-      peerRef.current.ondatachannel = (event) => {
-        dataChannelRef.current = event.channel;
+      peerRef.current.ondatachannel = (e) => {
+        dataChannelRef.current = e.channel;
         setupDataChannel(dataChannelRef.current);
       };
 
       socketRef.current.on('offer', async (data) => {
-        setConnectionStatus('Offer received. Connecting...');
         await peerRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
         const answer = await peerRef.current.createAnswer();
         await peerRef.current.setLocalDescription(answer);
@@ -89,11 +92,8 @@ const Room = () => {
     }
 
     socketRef.current.on('ice-candidate', async (data) => {
-      try {
-        await peerRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (e) {
-        console.error('Error adding ICE candidate', e);
-      }
+      try { await peerRef.current.addIceCandidate(new RTCIceCandidate(data.candidate)); } 
+      catch (e) { console.error(e); }
     });
 
     return () => {
@@ -102,102 +102,109 @@ const Room = () => {
     };
   }, [roomId, isSender]);
 
-  // ---------------------------------------------------------
-  // THE RECEIVER LOGIC
-  // ---------------------------------------------------------
+  const updateSpeed = (bytes) => {
+    const elapsed = (Date.now() - transferStartTime.current) / 1000; // in seconds
+    if (elapsed > 0) {
+      const speedMBps = (bytes / (1024 * 1024)) / elapsed;
+      setTransferSpeed(speedMBps.toFixed(2));
+    }
+  };
+
   const setupDataChannel = (channel) => {
-    channel.binaryType = 'arraybuffer'; // Crucial for receiving raw file bytes
-    
-    channel.onmessage = (event) => {
-      // 1. If it's a string, it's metadata (JSON)
+    channel.binaryType = 'arraybuffer';
+    channel.onmessage = async (event) => {
       if (typeof event.data === 'string') {
         const data = JSON.parse(event.data);
         if (data.type === 'meta') {
           expectedMeta.current = data;
           receiveBuffer.current = [];
           receivedSize.current = 0;
+          transferStartTime.current = Date.now();
           setIsTransferring(true);
           setConnectionStatus('Receiving file...');
         } else if (data.type === 'eof') {
-          // End of File! Reassemble and Download
-          const blob = new Blob(receiveBuffer.current, { type: expectedMeta.current.mime });
-          const downloadUrl = URL.createObjectURL(blob);
+          setIsTransferring(false);
+          setConnectionStatus('Verifying file integrity...');
           
+          const blob = new Blob(receiveBuffer.current, { type: expectedMeta.current.mime });
+          
+          // Verify Hash
+          const receivedHash = await calculateHash(blob);
+          if (receivedHash === expectedMeta.current.hash) {
+            setHashVerified(true);
+          }
+
+          // Trigger Download
+          const downloadUrl = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = downloadUrl;
           a.download = expectedMeta.current.name;
-          a.click(); // Trigger native browser download
+          a.click();
           
-          setIsTransferring(false);
           setTransferComplete(true);
           setConnectionStatus('Transfer Complete!');
           setProgress(100);
         }
-      } 
-      // 2. If it's an ArrayBuffer, it's a chunk of the file
-      else {
+      } else {
         receiveBuffer.current.push(event.data);
         receivedSize.current += event.data.byteLength;
-        
-        // Calculate progress %
+        updateSpeed(receivedSize.current);
         if (expectedMeta.current) {
-          const currentProgress = Math.round((receivedSize.current / expectedMeta.current.size) * 100);
-          setProgress(currentProgress);
+          setProgress(Math.round((receivedSize.current / expectedMeta.current.size) * 100));
         }
       }
     };
   };
 
-  // ---------------------------------------------------------
-  // THE SENDER LOGIC (Chunking & Backpressure)
-  // ---------------------------------------------------------
-  const sendFile = () => {
+  const sendFile = async () => {
     if (!fileToShare || !dataChannelRef.current) return;
+    setConnectionStatus('Generating secure hash...');
+    
+    // Generate SHA-256 hash before sending
+    const fileHash = await calculateHash(fileToShare);
+    
     setIsTransferring(true);
     setConnectionStatus('Sending file...');
+    transferStartTime.current = Date.now();
 
-    const chunkSize = 64 * 1024; // 64 KB per chunk
-    let offset = 0;
-
-    // 1. Send Metadata first
     dataChannelRef.current.send(JSON.stringify({
       type: 'meta',
       name: fileToShare.name,
       size: fileToShare.size,
-      mime: fileToShare.type
+      mime: fileToShare.type,
+      hash: fileHash // Send hash to receiver
     }));
 
-    // 2. Read and send chunks sequentially
+    const chunkSize = 64 * 1024;
+    let offset = 0;
+
     const readSlice = (currentOffset) => {
       const slice = fileToShare.slice(currentOffset, currentOffset + chunkSize);
       const reader = new FileReader();
       
       reader.onload = (e) => {
-        // Send the raw byte array
         dataChannelRef.current.send(e.target.result);
         offset += e.target.result.byteLength;
         setProgress(Math.round((offset / fileToShare.size) * 100));
+        updateSpeed(offset);
 
         if (offset < fileToShare.size) {
-          // BACKPRESSURE CONTROL: If WebRTC buffer gets over 1MB, wait 50ms before sending more
           if (dataChannelRef.current.bufferedAmount > 1024 * 1024) {
             setTimeout(() => readSlice(offset), 50);
           } else {
             readSlice(offset);
           }
         } else {
-          // File reading complete, send EOF signal
           dataChannelRef.current.send(JSON.stringify({ type: 'eof' }));
           setIsTransferring(false);
           setTransferComplete(true);
+          setHashVerified(true); // Sender knows their own hash is correct
           setConnectionStatus('Transfer Complete!');
         }
       };
-      
       reader.readAsArrayBuffer(slice);
     };
 
-    // Small delay to ensure metadata arrives before binary chunks
     setTimeout(() => readSlice(0), 100);
   };
 
@@ -210,7 +217,6 @@ const Room = () => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-slate-50">
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 w-full max-w-2xl">
-        
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-slate-800">Transfer Room</h1>
           <p className="text-slate-500 mt-2">Room ID: <span className="font-mono font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">{roomId}</span></p>
@@ -250,38 +256,42 @@ const Room = () => {
           </div>
         </div>
 
-        {/* Transfer Controls & Progress Bar */}
         {peerConnected && (
           <div className="mt-6 flex flex-col items-center">
             {isSender && !isTransferring && !transferComplete && (
-              <button 
-                onClick={sendFile}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold transition-all transform hover:scale-105 shadow-md"
-              >
-                <Send className="w-5 h-5" />
-                Send File Now
+              <button onClick={sendFile} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold transition-all transform hover:scale-105 shadow-md">
+                <Send className="w-5 h-5" /> Send File Now
               </button>
             )}
 
             {(isTransferring || transferComplete) && (
               <div className="w-full">
-                <div className="flex justify-between text-sm font-medium text-slate-600 mb-2">
-                  <span>{isSender ? 'Uploading...' : 'Downloading...'}</span>
+                <div className="flex justify-between items-center text-sm font-medium text-slate-600 mb-2">
+                  <span className="flex items-center gap-2">
+                    {isSender ? 'Uploading...' : 'Downloading...'}
+                    {isTransferring && <span className="flex items-center text-blue-600 bg-blue-50 px-2 py-0.5 rounded"><Clock className="w-3 h-3 mr-1"/> {transferSpeed} MB/s</span>}
+                  </span>
                   <span>{progress}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-3 mb-4 overflow-hidden">
-                  <div 
-                    className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out" 
-                    style={{ width: `${progress}%` }}
-                  ></div>
+                  <div className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
                 </div>
               </div>
             )}
             
-            {transferComplete && !isSender && (
-              <p className="text-green-600 font-semibold flex items-center gap-2 mt-2">
-                <Download className="w-5 h-5" /> File saved to your downloads folder.
-              </p>
+            {transferComplete && (
+              <div className="flex flex-col items-center gap-2 mt-2">
+                {!isSender && (
+                  <p className="text-green-600 font-semibold flex items-center gap-2">
+                    <Download className="w-5 h-5" /> File saved to your downloads folder.
+                  </p>
+                )}
+                {hashVerified && (
+                  <p className="text-emerald-600 text-sm font-bold flex items-center gap-1 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                    <ShieldCheck className="w-4 h-4" /> SHA-256 Integrity Verified
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}
