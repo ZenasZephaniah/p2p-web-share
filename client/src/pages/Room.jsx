@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { Copy, CheckCircle, File as FileIcon, Activity, Send, Download, ShieldCheck, Clock, Lock } from 'lucide-react';
+import { Copy, CheckCircle, File as FileIcon, Activity, Send, Download, ShieldCheck, Clock, Lock, XCircle } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { importEncryptionKey, encryptChunk, decryptChunk } from '../utils/crypto';
 
@@ -23,7 +23,7 @@ const Room = () => {
   
   const [progress, setProgress] = useState(0);
   const [transferSpeed, setTransferSpeed] = useState('0.00');
-  const [eta, setEta] = useState('--'); // NEW: ETA State
+  const [eta, setEta] = useState('--'); 
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferComplete, setTransferComplete] = useState(false);
   const [hashVerified, setHashVerified] = useState(false);
@@ -63,7 +63,12 @@ const Room = () => {
   useEffect(() => {
     if (!encryptionKey) return; 
 
-    socketRef.current = io('https://p2p-web-share-atem.onrender.com');
+    // IMPORTANT: Make sure this points to your deployed Render URL on Vercel
+    const SOCKET_URL = window.location.hostname === 'localhost' 
+      ? 'http://localhost:3000' 
+      : 'https://p2p-web-share-2ckz.onrender.com'; // Your Render URL
+
+    socketRef.current = io(SOCKET_URL);
     peerRef.current = new RTCPeerConnection(rtcConfig);
 
     peerRef.current.onicecandidate = (e) => {
@@ -121,14 +126,12 @@ const Room = () => {
     };
   }, [roomId, isSender, encryptionKey]);
 
-  // NEW: Integrated ETA calculation
   const updateStats = (bytes) => {
     const elapsed = (Date.now() - transferStartTime.current) / 1000;
     if (elapsed > 0) {
       const speedMBps = (bytes / (1024 * 1024)) / elapsed;
       setTransferSpeed(speedMBps.toFixed(2));
 
-      // Calculate ETA
       const totalSize = isSender ? fileToShare.size : expectedMeta.current?.size;
       if (totalSize && speedMBps > 0) {
         const remainingBytes = totalSize - bytes;
@@ -140,8 +143,7 @@ const Room = () => {
 
   const setupDataChannel = (channel) => {
     channel.binaryType = 'arraybuffer';
-    // NEW: Native WebRTC Buffer Threshold
-    channel.bufferedAmountLowThreshold = 1024 * 1024; // 1MB threshold
+    channel.bufferedAmountLowThreshold = 1024 * 1024; 
 
     channel.onmessage = async (event) => {
       if (typeof event.data === 'string') {
@@ -158,7 +160,6 @@ const Room = () => {
           setConnectionStatus('Verifying and Decrypting...');
           
           const blob = new Blob(receiveBuffer.current, { type: expectedMeta.current.mime });
-          
           const receivedHash = await calculateHash(blob);
           if (receivedHash === expectedMeta.current.hash) {
             setHashVerified(true);
@@ -216,6 +217,9 @@ const Room = () => {
       const reader = new FileReader();
       
       reader.onload = async (e) => {
+        // If user dissolved session mid-transfer
+        if (dataChannelRef.current.readyState !== 'open') return;
+
         try {
           const encryptedBuffer = await encryptChunk(encryptionKey, e.target.result);
           dataChannelRef.current.send(encryptedBuffer);
@@ -225,14 +229,13 @@ const Room = () => {
           updateStats(offset);
 
           if (offset < fileToShare.size) {
-            // NEW: Native WebRTC Backpressure Handling
             if (dataChannelRef.current.bufferedAmount > dataChannelRef.current.bufferedAmountLowThreshold) {
               dataChannelRef.current.onbufferedamountlow = () => {
-                dataChannelRef.current.onbufferedamountlow = null; // Clear listener
-                readSlice(); // Resume when buffer clears
+                dataChannelRef.current.onbufferedamountlow = null; 
+                readSlice(); 
               };
             } else {
-              readSlice(); // Continue immediately
+              readSlice(); 
             }
           } else {
             dataChannelRef.current.send(JSON.stringify({ type: 'eof' }));
@@ -257,12 +260,19 @@ const Room = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const dissolveSession = () => {
+    // Safely unmount and wipe memory
+    window.location.href = '/';
+  };
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-slate-50">
-      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 w-full max-w-2xl relative">
+      
+      {/* Box is wider now (max-w-4xl) */}
+      <div className="bg-white p-8 md:p-10 rounded-2xl shadow-sm border border-gray-100 w-full max-w-4xl relative">
         
         <div className="absolute top-6 right-6 flex items-center text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 text-xs font-bold shadow-sm">
-          <Lock className="w-3 h-3 mr-1.5" /> E2E Encrypted
+          <Lock className="w-3 h-3 mr-1.5" /> End-to-End Encrypted
         </div>
 
         <div className="text-center mb-8 mt-4">
@@ -271,31 +281,31 @@ const Room = () => {
         </div>
 
         {isSender && !peerConnected && (
-          <div className="mb-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
+          <div className="mb-8 p-5 bg-gray-50 rounded-xl border border-gray-200">
             <p className="text-sm font-semibold text-gray-600 mb-2 uppercase tracking-wider">Share this link to connect</p>
             <div className="flex items-center gap-2">
               <input type="text" readOnly value={inviteLink} className="flex-1 p-3 bg-white border border-gray-300 rounded-lg text-gray-600 font-mono text-sm focus:outline-none"/>
-              <button onClick={copyToClipboard} className="flex items-center justify-center p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors min-w-[100px]">
+              <button onClick={copyToClipboard} className="flex items-center justify-center p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors min-w-[120px]">
                 {copied ? <CheckCircle className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                <span className="ml-2 font-medium">{copied ? 'Copied!' : 'Copy'}</span>
+                <span className="ml-2 font-medium">{copied ? 'Copied!' : 'Copy Link'}</span>
               </button>
             </div>
           </div>
         )}
 
-        <div className="flex items-center p-4 border border-slate-200 rounded-xl bg-slate-50 mb-6 transition-all">
+        <div className="flex items-center p-5 border border-slate-200 rounded-xl bg-slate-50 mb-6 transition-all">
           <div className="p-3 bg-blue-100 text-blue-600 rounded-lg mr-4">
             <FileIcon className="w-8 h-8" />
           </div>
-          <div className="flex-1 truncate">
-            <p className="font-semibold text-slate-800 truncate">
+          <div className="flex-1 overflow-hidden pr-4">
+            <p className="font-semibold text-slate-800 truncate text-lg">
               {isSender ? fileToShare.name : (expectedMeta.current ? expectedMeta.current.name : 'Awaiting file info...')}
             </p>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-500 mt-1">
               {isSender ? `${(fileToShare.size / (1024 * 1024)).toFixed(2)} MB` : (expectedMeta.current ? `${(expectedMeta.current.size / (1024 * 1024)).toFixed(2)} MB` : 'Size unknown')}
             </p>
           </div>
-          <div className={`px-4 py-2 text-sm font-bold rounded-full flex items-center gap-2 transition-colors duration-300
+          <div className={`px-4 py-2 text-sm font-bold rounded-full flex items-center gap-2 transition-colors duration-300 whitespace-nowrap
             ${peerConnected ? (transferComplete ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700') : 'bg-amber-100 text-amber-700 animate-pulse'}`}
           >
             {peerConnected && !transferComplete && <Activity className="w-4 h-4 animate-bounce" />}
@@ -305,59 +315,70 @@ const Room = () => {
         </div>
 
         {peerConnected && (
-          <div className="mt-6 flex flex-col items-center">
+          <div className="mt-6 flex flex-col items-center w-full">
             {isSender && !isTransferring && !transferComplete && (
-              <button onClick={sendFile} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold transition-all transform hover:scale-105 shadow-md">
-                <Send className="w-5 h-5" /> Send Encrypted File
+              <button onClick={sendFile} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-10 py-4 rounded-xl font-bold transition-all transform hover:scale-105 shadow-md text-lg">
+                <Send className="w-6 h-6" /> Send Encrypted File
               </button>
             )}
 
             {(isTransferring || transferComplete) && (
               <div className="w-full">
-                <div className="flex justify-between items-center text-sm font-medium text-slate-600 mb-2">
-                  <span className="flex items-center gap-2">
-                    {isSender ? 'Encrypting & Uploading...' : 'Receiving & Decrypting...'}
-                    {/* NEW: Speed and ETA Badge combined cleanly */}
-                    {isTransferring && (
-                      <span className="flex items-center text-blue-600 bg-blue-50 px-2 py-0.5 rounded ml-2">
-                        <Clock className="w-3 h-3 mr-1"/> {transferSpeed} MB/s <span className="mx-1 text-blue-300">|</span> {eta} remaining
-                      </span>
-                    )}
-                  </span>
-                  <span>{progress}%</span>
+                <div className="flex justify-between items-center text-sm font-bold text-slate-600 mb-2">
+                  <span>{isSender ? 'Encrypting & Uploading...' : 'Receiving & Decrypting...'}</span>
+                  <span className="text-blue-600">{progress}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-3 mb-4 overflow-hidden">
-                  <div className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
+                
+                <div className="w-full bg-slate-200 rounded-full h-4 mb-6 overflow-hidden">
+                  <div className="bg-blue-600 h-4 rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
                 </div>
+
+                {/* DEDICATED TELEMETRY BOXES */}
+                {isTransferring && (
+                  <div className="grid grid-cols-2 gap-4 w-full max-w-lg mx-auto mb-6">
+                    <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 text-center">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Speed</p>
+                      <p className="text-2xl font-black text-slate-700 flex items-center justify-center gap-2">
+                        {transferSpeed} <span className="text-sm font-semibold text-slate-500">MB/s</span>
+                      </p>
+                    </div>
+                    <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 text-center">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">ETA</p>
+                      <p className="text-2xl font-black text-slate-700 flex items-center justify-center gap-2">
+                        <Clock className="w-5 h-5 text-slate-400" /> {eta}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             
             {transferComplete && (
-              <div className="flex flex-col items-center gap-2 mt-2">
+              <div className="flex flex-col items-center gap-3 mt-4">
                 {!isSender && (
-                  <p className="text-green-600 font-semibold flex items-center gap-2">
-                    <Download className="w-5 h-5" /> File saved to your downloads folder.
+                  <p className="text-green-600 font-semibold flex items-center gap-2 text-lg">
+                    <Download className="w-6 h-6" /> File saved to your downloads folder.
                   </p>
                 )}
                 {hashVerified && (
-                  <p className="text-emerald-600 text-sm font-bold flex items-center gap-1 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-                    <ShieldCheck className="w-4 h-4" /> SHA-256 Integrity Verified
+                  <p className="text-emerald-700 text-sm font-bold flex items-center gap-1.5 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-200">
+                    <ShieldCheck className="w-5 h-5" /> SHA-256 Integrity Verified
                   </p>
                 )}
-                
-                {/* NEW: Dissolve Session Button */}
-                <button 
-                  onClick={() => window.location.href = '/'}
-                  className="mt-6 px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-lg transition-colors border border-slate-300"
-                >
-                  Share Another File (Dissolve Session)
-                </button>
               </div>
             )}
           </div>
         )}
-
       </div>
+
+      {/* ALWAYS VISIBLE DISSOLVE SESSION BUTTON */}
+      <button 
+        onClick={dissolveSession}
+        className="mt-8 flex items-center gap-2 px-6 py-2.5 bg-transparent hover:bg-slate-200 text-slate-500 hover:text-slate-700 text-sm font-bold rounded-lg transition-colors border border-transparent hover:border-slate-300"
+      >
+        <XCircle className="w-4 h-4" /> Cancel & Dissolve Session
+      </button>
+
     </div>
   );
 };
