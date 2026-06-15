@@ -19,29 +19,29 @@ A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing
 ## Local Setup Instructions
 
 1. **Clone the repository**
-   \`\`\`bash
+   ```bash
    git clone https://github.com/YOUR_GITHUB_USERNAME/mars-p2p.git
    cd mars-p2p
-   \`\`\`
+   ```
 
 2. **Start the Signaling Server (Backend)**
-   \`\`\`bash
+   ```bash
    cd server
    npm install
    npm run dev
-   \`\`\`
+   ```
    *Runs on http://localhost:3000*
 
 3. **Start the React App (Frontend)**
    Open a new terminal split:
-   \`\`\`bash
+   ```bash
    cd client
    npm install
    npm run dev
-   \`\`\`
+   ```
    *Runs on http://localhost:5173*
 
-## System Architecture / Handshake Flow
+## System Architecture
 1. **User A (Sender)** selects a file. A local AES-GCM key is generated.
 2. User A joins a Socket.io room on the signaling server.
 3. **User B (Receiver)** opens the invite link (containing the key in the URL hash).
