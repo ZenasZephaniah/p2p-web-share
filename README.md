@@ -65,8 +65,7 @@ This application goes beyond standard WebRTC encryption by implementing an appli
 
 ---
 
-## Technical Engineering Highlights
-*Why this architecture stands out from standard tutorials:*
+## Features and Highlights
 
 *   **Native WebRTC Backpressure Management:** Instead of using naive `setTimeout` loops to throttle data, this application monitors the `channel.bufferedAmountLowThreshold`. If the browser's buffer fills up, it intelligently halts the `FileReader` and only resumes when the network clears, ensuring maximum throughput without crashing the browser's RAM.
 *   **Strict Integrity Protocols:** If the SHA-256 hash of the reconstructed file does not perfectly match the sender's original hash, the file is flagged as corrupted. The application does not utilize bypass fallbacks; cryptographic integrity is absolute.
