@@ -344,6 +344,14 @@ const Room = () => {
                     <ShieldCheck className="w-4 h-4" /> SHA-256 Integrity Verified
                   </p>
                 )}
+                
+                {/* NEW: Dissolve Session Button */}
+                <button 
+                  onClick={() => window.location.href = '/'}
+                  className="mt-6 px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-lg transition-colors border border-slate-300"
+                >
+                  Share Another File (Dissolve Session)
+                </button>
               </div>
             )}
           </div>
