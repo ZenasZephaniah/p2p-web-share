@@ -1,4 +1,4 @@
-# P2P Web Share - Secure Direct File Transfer 🚀
+# P2P Web Share - Secure Direct File Transfer 
 
 A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing web application. Built to bypass traditional server bottlenecks, this app allows users to stream files directly between browsers using WebRTC.
 
@@ -10,7 +10,7 @@ A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing
 - **Real-Time Analytics:** Tracks dynamic transfer speeds (MB/s) and progress percentages.
 - **Graceful Disconnects:** Actively monitors connection states and alerts users if a peer drops mid-transfer.
 
-## 🛠️ Tech Stack
+## Tech Stack
 - **Frontend:** React.js (Vite), Tailwind CSS, Lucide Icons
 - **P2P Networking:** Native WebRTC API (`RTCPeerConnection`)
 - **Signaling Server:** Node.js, Express.js, Socket.io
@@ -50,4 +50,3 @@ A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing
 6. User A chunks, encrypts, and sends the file. User B receives, decrypts, and reassembles the Blob.
 
 ---
-*Developed as a solution for the OpenProjects 2026 Problem Statement.*
