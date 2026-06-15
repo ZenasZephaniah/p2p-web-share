@@ -63,10 +63,9 @@ const Room = () => {
   useEffect(() => {
     if (!encryptionKey) return; 
 
-    // Make sure this points to your deployed Render URL on Vercel
     const SOCKET_URL = window.location.hostname === 'localhost' 
       ? 'http://localhost:3000' 
-      : 'https://p2p-web-share-atem.onrender.com'; // Your Render URL
+      : 'https://p2p-web-share-atem.onrender.com';
 
     socketRef.current = io(SOCKET_URL);
     peerRef.current = new RTCPeerConnection(rtcConfig);
@@ -217,7 +216,6 @@ const Room = () => {
       const reader = new FileReader();
       
       reader.onload = async (e) => {
-        // If user dissolved session mid-transfer
         if (dataChannelRef.current.readyState !== 'open') return;
 
         try {
@@ -261,14 +259,12 @@ const Room = () => {
   };
 
   const dissolveSession = () => {
-    // Safely unmount and wipe memory
     window.location.href = '/';
   };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-slate-50">
       
-      {/* Box is wider now (max-w-4xl) */}
       <div className="bg-white p-8 md:p-10 rounded-2xl shadow-sm border border-gray-100 w-full max-w-4xl relative">
         
         <div className="absolute top-6 right-6 flex items-center text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 text-xs font-bold shadow-sm">
@@ -326,42 +322,44 @@ const Room = () => {
               <div className="w-full">
                 <div className="flex justify-between items-center text-sm font-bold text-slate-600 mb-2">
                   <span>{isSender ? 'Encrypting & Uploading...' : 'Receiving & Decrypting...'}</span>
-                  <span className="text-blue-600">{progress}%</span>
+                  <span className={transferComplete ? "text-green-600" : "text-blue-600"}>{progress}%</span>
                 </div>
                 
                 <div className="w-full bg-slate-200 rounded-full h-4 mb-6 overflow-hidden">
-                  <div className="bg-blue-600 h-4 rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
+                  <div className={`${transferComplete ? 'bg-green-500' : 'bg-blue-600'} h-4 rounded-full transition-all duration-300 ease-out`} style={{ width: `${progress}%` }}></div>
                 </div>
 
-                {/* DEDICATED TELEMETRY BOXES */}
-                {isTransferring && (
-                  <div className="grid grid-cols-2 gap-4 w-full max-w-lg mx-auto mb-6">
-                    <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 text-center">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Speed</p>
-                      <p className="text-2xl font-black text-slate-700 flex items-center justify-center gap-2">
-                        {transferSpeed} <span className="text-sm font-semibold text-slate-500">MB/s</span>
-                      </p>
-                    </div>
-                    <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 text-center">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">ETA</p>
-                      <p className="text-2xl font-black text-slate-700 flex items-center justify-center gap-2">
-                        <Clock className="w-5 h-5 text-slate-400" /> {eta}
-                      </p>
-                    </div>
+                {/* TELEMETRY BOXES - NOW ALWAYS VISIBLE AFTER START */}
+                <div className="grid grid-cols-2 gap-4 w-full max-w-lg mx-auto mb-6">
+                  <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 text-center">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      {transferComplete ? 'Final Speed' : 'Speed'}
+                    </p>
+                    <p className="text-2xl font-black text-slate-700 flex items-center justify-center gap-2">
+                      {transferSpeed} <span className="text-sm font-semibold text-slate-500">MB/s</span>
+                    </p>
                   </div>
-                )}
+                  <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 text-center">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      {transferComplete ? 'Status' : 'ETA'}
+                    </p>
+                    <p className="text-2xl font-black text-slate-700 flex items-center justify-center gap-2">
+                      <Clock className="w-5 h-5 text-slate-400" /> {transferComplete ? '0s' : eta}
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
             
             {transferComplete && (
-              <div className="flex flex-col items-center gap-3 mt-4">
+              <div className="flex flex-col items-center gap-3 mt-2">
                 {!isSender && (
-                  <p className="text-green-600 font-semibold flex items-center gap-2 text-lg">
+                  <p className="text-green-600 font-semibold flex items-center gap-2 text-lg mb-2">
                     <Download className="w-6 h-6" /> File saved to your downloads folder.
                   </p>
                 )}
                 {hashVerified && (
-                  <p className="text-emerald-700 text-sm font-bold flex items-center gap-1.5 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-200">
+                  <p className="text-emerald-700 text-sm font-bold flex items-center gap-1.5 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-200 shadow-sm">
                     <ShieldCheck className="w-5 h-5" /> SHA-256 Integrity Verified
                   </p>
                 )}
@@ -371,7 +369,6 @@ const Room = () => {
         )}
       </div>
 
-      {/* ALWAYS VISIBLE DISSOLVE SESSION BUTTON */}
       <button 
         onClick={dissolveSession}
         className="mt-8 flex items-center gap-2 px-6 py-2.5 bg-transparent hover:bg-slate-200 text-slate-500 hover:text-slate-700 text-sm font-bold rounded-lg transition-colors border border-transparent hover:border-slate-300"
