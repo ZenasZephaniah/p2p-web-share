@@ -1,52 +1,127 @@
-# P2P Web Share - Secure Direct File Transfer 
+# P2P Direct Web Share
+Author - Dara Zenas Zephaniah, 23321010
 
-A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing web application. Built to bypass traditional server bottlenecks, this app allows users to stream files directly between browsers using WebRTC.
+A lightweight, high-performance, **Zero-Knowledge End-to-End Encrypted (E2EE)** peer-to-peer file sharing application. Built to bypass traditional server bottlenecks, this application allows users to stream files directly between browsers using WebRTC Data Channels.
 
-## Key Features
-- **True Peer-to-Peer Transfer:** Files are streamed directly from Sender to Receiver via WebRTC `RTCDataChannel`. The server never touches the file data.
-- **Zero-Knowledge Encryption (E2E):** Implements the Web Crypto API (AES-GCM). The encryption key is generated locally and passed via the URL hash fragment (`#key=...`), ensuring the signaling server has zero access to the payload.
-- **Memory-Safe Chunking:** Large files are read and transmitted in 64KB chunks using the `FileReader` API and ArrayBuffers, preventing browser RAM overflow.
-- **Cryptographic Verification:** Generates a SHA-256 hash of the file prior to transfer and verifies it on the receiver's end to guarantee zero data corruption.
-- **Real-Time Analytics:** Tracks dynamic transfer speeds (MB/s) and progress percentages.
-- **Graceful Disconnects:** Actively monitors connection states and alerts users if a peer drops mid-transfer.
+**Evaluation Framework:** MARS Problem Statement 2 — Direct Browser-to-Browser File Transfer  
+**Developer:** Zenas Zephaniah  
+
+### Live Deployments
+- **Frontend (Client):** [[Click Here](https://p2p-web-share-henna.vercel.app/)]
+- **Backend (Signaling):** [[Click Here](https://p2p-web-share-atem.onrender.com)]
+
+---
+
+## System Architecture & Zero-Knowledge Flow
+
+The application utilizes a completely decoupled architecture. The Node.js signaling server acts strictly as a telephone switchboard to exchange routing data. **It never touches, processes, or stores any file payloads or encryption keys.**
+
+```text
+       [ Sender's Browser ]
+       1. Selects File & Generates AES-256 Key
+       2. Connects to Node.js Room
+                |
+                v  (Exchanges SDP Offers & ICE Candidates ONLY)
+      [ Socket.io Signaling Server ] 
+                ^  (Server NEVER sees the #key=... fragment)
+                |
+       3. Joins via Invite Link containing #key=...
+       [ Receiver's Browser ]
+
+===================================================================
+      HANDSHAKE COMPLETE. SERVER DISCONNECTS FROM DATA FLOW.
+===================================================================
+
+       [ Sender's Browser ]
+                |
+                |  Direct WebRTC RTCDataChannel
+                |  Streaming 64KB Chunks (AES-GCM Encrypted)
+                v
+       [ Receiver's Browser ]
+       4. Decrypts chunks in-memory, verifies SHA-256, auto-downloads.
+```
+
+---
+
+## Problem Statement Fulfillment Matrix
+
+### Core MVP Capabilities (100% Achieved)
+| Feature | Implementation Detail |
+| :--- | :--- |
+| **Share Room Creation** | Sleek UI wizard generates a mathematically secure, unique sandboxed session and a 1-click invite link. Enforces <50MB limit for safe RAM buffering. |
+| **Signaling Handshake** | Lightweight Express/Socket.io backend manages WebRTC `offer`, `answer`, and `ice-candidate` packets natively. |
+| **Direct P2P Transfer** | Utilizes native `RTCPeerConnection` and `RTCDataChannel`. Reads files using `FileReader.readAsArrayBuffer` and streams raw binary. No wrapper libraries (like PeerJS) were used. |
+| **Basic Chunk Verification** | Cryptographic block hashing. The Sender generates a SHA-256 hash of the file. The Receiver reconstructs the payload and computes a matching SHA-256 hash to guarantee **zero data corruption**. |
+| **Progress & Telemetry** | Dedicated UI modules track dynamic transfer speeds (MB/s), Estimated Time of Arrival (ETA), and a live percentage progress bar. |
+| **Graceful Disconnects** | Actively monitors `onconnectionstatechange`. If a peer drops mid-transfer, the UI safely aborts, alerts the user, and provides a "Dissolve Session" option to wipe memory. |
+| **Auto-Download** | Incoming ArrayBuffers are reassembled into a local Blob URL, triggering an automated, native browser download upon hash verification. |
+
+### Advanced Extension (Brownie Point) Achieved
+
+#### Zero-Knowledge End-to-End Encryption (AES-GCM)
+This application goes beyond standard WebRTC encryption by implementing an application-layer **Zero-Knowledge Architecture**:
+1. The Sender's browser uses the Web Crypto API to generate a 256-bit AES-GCM key.
+2. The key is appended to the invite link exclusively as a URL Hash Fragment (`#key=...`).
+3. **Crucial Security Detail:** Browsers *do not* send URL hash fragments to servers via HTTP. The signaling server is physically incapable of intercepting the decryption key.
+4. Every 64KB chunk is encrypted with a **unique Initialization Vector (IV)** before transmission, preventing cryptographic replay vulnerabilities. 
+
+---
+
+## Technical Engineering Highlights
+*Why this architecture stands out from standard tutorials:*
+
+*   **Native WebRTC Backpressure Management:** Instead of using naive `setTimeout` loops to throttle data, this application monitors the `channel.bufferedAmountLowThreshold`. If the browser's buffer fills up, it intelligently halts the `FileReader` and only resumes when the network clears, ensuring maximum throughput without crashing the browser's RAM.
+*   **Strict Integrity Protocols:** If the SHA-256 hash of the reconstructed file does not perfectly match the sender's original hash, the file is flagged as corrupted. The application does not utilize bypass fallbacks; cryptographic integrity is absolute.
+*   **Memory-Safe Session Dissolution:** A dedicated "Cancel & Dissolve Session" function actively closes WebRTC channels, severs WebSocket connections, and routes the user away, guaranteeing browser garbage collection clears the decrypted file from RAM.
+
+---
 
 ## Tech Stack
-- **Frontend:** React.js (Vite), Tailwind CSS, Lucide Icons
-- **P2P Networking:** Native WebRTC API (`RTCPeerConnection`)
-- **Signaling Server:** Node.js, Express.js, Socket.io
-- **Security:** Web Crypto API (AES-GCM, SHA-256)
 
-## Local Setup Instructions
+**Frontend (Client)**
+*   React 18 + Vite (Single Page Application)
+*   Tailwind CSS + Lucide Icons (UI/UX)
+*   React Router (SPA Routing)
+*   Web Crypto API (`crypto.subtle`)
+*   Native WebRTC (`RTCPeerConnection`, `RTCDataChannel`)
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/YOUR_GITHUB_USERNAME/mars-p2p.git
-   cd mars-p2p
-   ```
+**Backend (Signaling Node)**
+*   Node.js + Express.js
+*   Socket.io (Real-time pub/sub routing)
+*   Render (Hosting)
 
-2. **Start the Signaling Server (Backend)**
-   ```bash
-   cd server
-   npm install
-   npm run dev
-   ```
-   *Runs on http://localhost:3000*
+---
 
-3. **Start the React App (Frontend)**
-   Open a new terminal split:
-   ```bash
-   cd client
-   npm install
-   npm run dev
-   ```
-   *Runs on http://localhost:5173*
+## Local Development & Testing Protocol
 
-## System Architecture
-1. **User A (Sender)** selects a file. A local AES-GCM key is generated.
-2. User A joins a Socket.io room on the signaling server.
-3. **User B (Receiver)** opens the invite link (containing the key in the URL hash).
-4. User A and User B exchange SDP Offers/Answers and ICE Candidates via the signaling server to bypass NATs/Firewalls.
-5. A direct WebRTC tunnel is established. The signaling server steps back.
-6. User A chunks, encrypts, and sends the file. User B receives, decrypts, and reassembles the Blob.
+### Prerequisites
+- Node.js v18+ installed.
+- Two browser contexts (e.g., Chrome, and a Chrome Incognito window).
+
+### 1. Launch the Signaling Server
+```bash
+cd server
+npm install
+npm run dev
+```
+*Server will initialize on `http://localhost:3000`*
+
+### 2. Launch the React Client
+Open a second terminal split:
+```bash
+cd client
+npm install
+npm run dev
+```
+*Client will initialize on `http://localhost:5173`*
+
+### 3. Verification Testing Workflow
+1. **Host Node:** Open `http://localhost:5173` in a standard browser window.
+2. Click **Create a Room** and drag-and-drop a test file (e.g., a 10MB PDF).
+3. Click **Copy Link**. Notice the encryption key is safely embedded in the `#key=` fragment.
+4. **Receiver Node:** Open an Incognito Window and paste the link.
+5. **Observe Handshake:** Watch the WebRTC tunnel negotiate. Both windows will display a green `Connected` badge.
+6. **Execute Transfer:** Click "Send Encrypted File" on the Host Node. Observe the real-time MB/s telemetry and ETA.
+7. **Verify & Download:** Upon completion, observe the Receiver node calculate the SHA-256 hash, display the green Integrity badge, and auto-download the file. 
 
 ---
