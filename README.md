@@ -1,4 +1,4 @@
-# P2P Web Share - Secure Direct File Transfer 🚀
+# P2P Web Share - Secure Direct File Transfer 
 
 A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing web application. Built to bypass traditional server bottlenecks, this app allows users to stream files directly between browsers using WebRTC.
 
@@ -10,7 +10,7 @@ A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing
 - **Real-Time Analytics:** Tracks dynamic transfer speeds (MB/s) and progress percentages.
 - **Graceful Disconnects:** Actively monitors connection states and alerts users if a peer drops mid-transfer.
 
-## 🛠️ Tech Stack
+## Tech Stack
 - **Frontend:** React.js (Vite), Tailwind CSS, Lucide Icons
 - **P2P Networking:** Native WebRTC API (`RTCPeerConnection`)
 - **Signaling Server:** Node.js, Express.js, Socket.io
@@ -19,29 +19,29 @@ A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing
 ## Local Setup Instructions
 
 1. **Clone the repository**
-   \`\`\`bash
+   ```bash
    git clone https://github.com/YOUR_GITHUB_USERNAME/mars-p2p.git
    cd mars-p2p
-   \`\`\`
+   ```
 
 2. **Start the Signaling Server (Backend)**
-   \`\`\`bash
+   ```bash
    cd server
    npm install
    npm run dev
-   \`\`\`
+   ```
    *Runs on http://localhost:3000*
 
 3. **Start the React App (Frontend)**
    Open a new terminal split:
-   \`\`\`bash
+   ```bash
    cd client
    npm install
    npm run dev
-   \`\`\`
+   ```
    *Runs on http://localhost:5173*
 
-## System Architecture / Handshake Flow
+## System Architecture
 1. **User A (Sender)** selects a file. A local AES-GCM key is generated.
 2. User A joins a Socket.io room on the signaling server.
 3. **User B (Receiver)** opens the invite link (containing the key in the URL hash).
@@ -50,4 +50,3 @@ A lightweight, decentralized, and end-to-end encrypted peer-to-peer file sharing
 6. User A chunks, encrypts, and sends the file. User B receives, decrypts, and reassembles the Blob.
 
 ---
-*Developed as a solution for the OpenProjects 2026 Problem Statement.*
