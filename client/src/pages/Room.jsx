@@ -63,10 +63,10 @@ const Room = () => {
   useEffect(() => {
     if (!encryptionKey) return; 
 
-    // IMPORTANT: Make sure this points to your deployed Render URL on Vercel
+    // Make sure this points to your deployed Render URL on Vercel
     const SOCKET_URL = window.location.hostname === 'localhost' 
       ? 'http://localhost:3000' 
-      : 'https://p2p-web-share-2ckz.onrender.com'; // Your Render URL
+      : 'https://p2p-web-share-atem.onrender.com'; // Your Render URL
 
     socketRef.current = io(SOCKET_URL);
     peerRef.current = new RTCPeerConnection(rtcConfig);
