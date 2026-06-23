@@ -2,7 +2,7 @@
 
 A lightweight, high-performance, **Zero-Knowledge End-to-End Encrypted (E2EE)** peer-to-peer file sharing application. Built to bypass traditional server bottlenecks, this application allows users to stream files directly between browsers using WebRTC Data Channels.
 
-**Developer:** Dara Zenas Zephaniah, 23321010
+**Developer:** Zenas Zephaniah
 
 ### Live Deployments
 - **Frontend (Client):** [[Click Here](https://p2p-web-share-henna.vercel.app/)]
