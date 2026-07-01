@@ -102,7 +102,7 @@ cd server
 npm install
 npm run dev
 ```
-*Server will initialize on `http://localhost:3000`*
+Server will initialize on `http://localhost:3000`
 
 ### 2. Launch the React Client
 Open a second terminal split:
@@ -111,7 +111,7 @@ cd client
 npm install
 npm run dev
 ```
-*Client will initialize on `http://localhost:5173`*
+Client will initialize on `http://localhost:5173`
 
 ### 3. Verification Testing Workflow
 1. **Host Node:** Open `http://localhost:5173` in a standard browser window.
